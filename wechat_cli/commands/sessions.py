@@ -9,21 +9,27 @@ import click
 
 from ..core.contacts import get_contact_names
 from ..core.messages import decompress_content, format_msg_type
-from ..output.formatter import output
+from .filters import BOOL_CHOICE, SESSION_MSG_TYPE_CHOICE, matches_session_filters
+from ..output.formatter import Column, QUERY_FORMATS, render_result
 
 
 @click.command("sessions")
 @click.option("--limit", default=20, help="返回的会话数量")
-@click.option("--format", "fmt", default="json", type=click.Choice(["json", "text"]), help="输出格式")
+@click.option("--chat", default="", help="按聊天名称或 username 过滤")
+@click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, help="是否只看群聊: true/false")
+@click.option("--msg-type", "msg_type_filter", default=None, type=SESSION_MSG_TYPE_CHOICE, help="消息类型过滤: text/link/file")
+@click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, help="是否只看有未读的会话: true/false")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
 @click.pass_context
-def sessions(ctx, limit, fmt):
+def sessions(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fmt):
     """获取最近会话列表
 
     \b
     示例:
       wechat-cli sessions                # 默认返回最近 20 个会话 (JSON)
       wechat-cli sessions --limit 10     # 最近 10 个会话
-      wechat-cli sessions --format text  # 纯文本输出
+      wechat-cli sessions --chat "AI交流群" --is-group true
+      wechat-cli sessions --format table # 表格输出
     """
     app = ctx.obj
 
@@ -40,14 +46,18 @@ def sessions(ctx, limit, fmt):
             FROM SessionTable
             WHERE last_timestamp > 0
             ORDER BY last_timestamp DESC
-            LIMIT ?
-        """, (limit,)).fetchall()
+        """).fetchall()
 
     results = []
     for r in rows:
-        username, unread, summary, ts, msg_type, sender, sender_name = r
+        username, unread_count, summary, ts, raw_msg_type, sender, sender_name = r
         display = names.get(username, username)
         is_group = '@chatroom' in username
+        if not matches_session_filters(
+            username, display, unread_count, raw_msg_type,
+            chat=chat, is_group=is_group_filter, unread=unread_filter, msg_type=msg_type_filter,
+        ):
+            continue
 
         if isinstance(summary, bytes):
             summary = decompress_content(summary, 4) or '(压缩内容)'
@@ -62,27 +72,41 @@ def sessions(ctx, limit, fmt):
             'chat': display,
             'username': username,
             'is_group': is_group,
-            'unread': unread or 0,
+            'unread': unread_count or 0,
             'last_message': str(summary or ''),
-            'msg_type': format_msg_type(msg_type),
+            'msg_type': format_msg_type(raw_msg_type),
             'sender': sender_display,
             'timestamp': ts,
             'time': datetime.fromtimestamp(ts).strftime('%m-%d %H:%M'),
         })
+        if len(results) >= limit:
+            break
 
-    if fmt == 'json':
-        output(results, 'json')
-    else:
-        lines = []
-        for r in results:
-            entry = f"[{r['time']}] {r['chat']}"
-            if r['is_group']:
-                entry += " [群]"
-            if r['unread'] > 0:
-                entry += f" ({r['unread']}条未读)"
-            entry += f"\n  {r['msg_type']}: "
-            if r['sender']:
-                entry += f"{r['sender']}: "
-            entry += r['last_message']
-            lines.append(entry)
-        output(f"最近 {len(results)} 个会话:\n\n" + "\n\n".join(lines), 'text')
+    render_result(
+        results, fmt,
+        columns=[
+            Column("time", "TIME", width=11),
+            Column("unread", "UNREAD", width=6),
+            Column("chat", "CHAT", min_width=10, max_width=24),
+            Column("msg_type", "TYPE", width=10),
+            Column("sender", "SENDER", min_width=8, max_width=16),
+            Column("last_message", "LAST MESSAGE", min_width=20, max_width=60),
+        ],
+        text_fn=_format_sessions_text,
+    )
+
+
+def _format_sessions_text(results):
+    lines = []
+    for r in results:
+        entry = f"[{r['time']}] {r['chat']}"
+        if r['is_group']:
+            entry += " [群]"
+        if r['unread'] > 0:
+            entry += f" ({r['unread']}条未读)"
+        entry += f"\n  {r['msg_type']}: "
+        if r['sender']:
+            entry += f"{r['sender']}: "
+        entry += r['last_message']
+        lines.append(entry)
+    return f"最近 {len(results)} 个会话:\n\n" + "\n\n".join(lines)

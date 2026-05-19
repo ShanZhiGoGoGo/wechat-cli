@@ -11,7 +11,7 @@ from ..core.messages import (
     resolve_chat_context,
     validate_pagination,
 )
-from ..output.formatter import output
+from ..output.formatter import Column, QUERY_FORMATS, render_result
 
 
 @click.command("history")
@@ -20,7 +20,7 @@ from ..output.formatter import output
 @click.option("--offset", default=0, help="分页偏移量")
 @click.option("--start-time", default="", help="起始时间 YYYY-MM-DD [HH:MM[:SS]]")
 @click.option("--end-time", default="", help="结束时间 YYYY-MM-DD [HH:MM[:SS]]")
-@click.option("--format", "fmt", default="json", type=click.Choice(["json", "text"]), help="输出格式")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
 @click.option("--type", "msg_type", default=None, type=click.Choice(MSG_TYPE_NAMES), help="消息类型过滤")
 @click.option("--media", is_flag=True, help="解析媒体文件路径（图片/文件/视频/语音）")
 @click.pass_context
@@ -32,7 +32,7 @@ def history(ctx, chat_name, limit, offset, start_time, end_time, fmt, msg_type, 
       wechat-cli history "张三"                          # 最近 50 条消息
       wechat-cli history "张三" --limit 100 --offset 50  # 分页查询
       wechat-cli history "AI交流群" --start-time "2026-04-01" --end-time "2026-04-02"
-      wechat-cli history "张三" --format text             # 纯文本输出
+      wechat-cli history "张三" --format table            # 表格输出
     """
     app = ctx.obj
 
@@ -59,29 +59,38 @@ def history(ctx, chat_name, limit, offset, start_time, end_time, fmt, msg_type, 
         msg_type_filter=type_filter, resolve_media=media, db_dir=app.db_dir,
     )
 
-    if fmt == 'json':
-        output({
-            'chat': chat_ctx['display_name'],
-            'username': chat_ctx['username'],
-            'is_group': chat_ctx['is_group'],
-            'count': len(lines),
-            'offset': offset,
-            'limit': limit,
-            'start_time': start_time or None,
-            'end_time': end_time or None,
-            'type': msg_type or None,
-            'messages': lines,
-            'failures': failures if failures else None,
-        }, 'json')
-    else:
-        header = f"{chat_ctx['display_name']} 的消息记录（返回 {len(lines)} 条，offset={offset}, limit={limit}）"
-        if chat_ctx['is_group']:
-            header += " [群聊]"
-        if start_time or end_time:
-            header += f"\n时间范围: {start_time or '最早'} ~ {end_time or '最新'}"
-        if failures:
-            header += "\n查询失败: " + "；".join(failures)
-        if lines:
-            output(header + ":\n\n" + "\n".join(lines), 'text')
-        else:
-            output(f"{chat_ctx['display_name']} 无消息记录", 'text')
+    data = {
+        'chat': chat_ctx['display_name'],
+        'username': chat_ctx['username'],
+        'is_group': chat_ctx['is_group'],
+        'count': len(lines),
+        'offset': offset,
+        'limit': limit,
+        'start_time': start_time or None,
+        'end_time': end_time or None,
+        'type': msg_type or None,
+        'messages': lines,
+        'failures': failures if failures else None,
+    }
+    records_key = 'messages'
+    if fmt in ('ndjson', 'table'):
+        data = {**data, 'message_records': [{'message': line} for line in lines]}
+        records_key = 'message_records'
+    render_result(
+        data, fmt, records_key=records_key,
+        columns=[Column("message", "MESSAGE", min_width=40, max_width=120)],
+        text_fn=_format_history_text,
+    )
+
+
+def _format_history_text(data):
+    header = f"{data['chat']} 的消息记录（返回 {data['count']} 条，offset={data['offset']}, limit={data['limit']}）"
+    if data['is_group']:
+        header += " [群聊]"
+    if data['start_time'] or data['end_time']:
+        header += f"\n时间范围: {data['start_time'] or '最早'} ~ {data['end_time'] or '最新'}"
+    if data['failures']:
+        header += "\n查询失败: " + "；".join(data['failures'])
+    if data['messages']:
+        return header + ":\n\n" + "\n".join(data['messages'])
+    return f"{data['chat']} 无消息记录"

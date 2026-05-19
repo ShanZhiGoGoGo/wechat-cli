@@ -11,7 +11,8 @@ import click
 from ..core.config import STATE_DIR
 from ..core.contacts import get_contact_names
 from ..core.messages import decompress_content, format_msg_type
-from ..output.formatter import output
+from .filters import BOOL_CHOICE, SESSION_MSG_TYPE_CHOICE, matches_session_filters
+from ..output.formatter import Column, QUERY_FORMATS, render_result
 
 STATE_FILE = os.path.join(STATE_DIR, "last_check.json")
 
@@ -33,16 +34,21 @@ def _save_last_state(state):
 
 
 @click.command("new-messages")
-@click.option("--format", "fmt", default="json", type=click.Choice(["json", "text"]), help="输出格式")
+@click.option("--chat", default="", help="按聊天名称或 username 过滤")
+@click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, help="是否只看群聊: true/false")
+@click.option("--msg-type", "msg_type_filter", default=None, type=SESSION_MSG_TYPE_CHOICE, help="消息类型过滤: text/link/file")
+@click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, help="是否只看有未读的会话: true/false")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
 @click.pass_context
-def new_messages(ctx, fmt):
+def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, fmt):
     """获取自上次调用以来的新消息
 
     \b
     示例:
       wechat-cli new-messages               # 首次: 返回未读消息并记录状态
       wechat-cli new-messages               # 再次: 仅返回新增消息
-      wechat-cli new-messages --format text  # 纯文本输出
+      wechat-cli new-messages --chat "AI交流群" --unread true
+      wechat-cli new-messages --format table # 表格输出
     \b
     状态文件: ~/.wechat-cli/last_check.json (删除此文件可重置)
     """
@@ -82,6 +88,11 @@ def new_messages(ctx, fmt):
             if s['unread'] and s['unread'] > 0:
                 display = names.get(username, username)
                 is_group = '@chatroom' in username
+                if not matches_session_filters(
+                    username, display, s['unread'], s['msg_type'],
+                    chat=chat, is_group=is_group_filter, unread=unread_filter, msg_type=msg_type_filter,
+                ):
+                    continue
                 summary = s['summary']
                 if isinstance(summary, bytes):
                     summary = decompress_content(summary, 4) or '(压缩内容)'
@@ -99,17 +110,8 @@ def new_messages(ctx, fmt):
                     'timestamp': s['timestamp'],
                 })
 
-        if fmt == 'json':
-            output({'first_call': True, 'unread_count': len(unread_msgs), 'messages': unread_msgs}, 'json')
-        else:
-            if unread_msgs:
-                lines = []
-                for m in unread_msgs:
-                    tag = " [群]" if m['is_group'] else ""
-                    lines.append(f"[{m['time']}] {m['chat']}{tag} ({m['unread']}条未读): {m['last_message']}")
-                output(f"当前 {len(unread_msgs)} 个未读会话:\n\n" + "\n".join(lines), 'text')
-            else:
-                output("当前无未读消息（已记录状态，下次调用将返回新消息）", 'text')
+        data = {'first_call': True, 'unread_count': len(unread_msgs), 'messages': unread_msgs}
+        _render_messages(data, fmt)
         return
 
     # 后续调用：对比差异
@@ -119,6 +121,11 @@ def new_messages(ctx, fmt):
         if s['timestamp'] > prev_ts:
             display = names.get(username, username)
             is_group = '@chatroom' in username
+            if not matches_session_filters(
+                username, display, s['unread'], s['msg_type'],
+                chat=chat, is_group=is_group_filter, unread=unread_filter, msg_type=msg_type_filter,
+            ):
+                continue
             summary = s['summary']
             if isinstance(summary, bytes):
                 summary = decompress_content(summary, 4) or '(压缩内容)'
@@ -133,6 +140,7 @@ def new_messages(ctx, fmt):
                 'chat': display,
                 'username': username,
                 'is_group': is_group,
+                'unread': s['unread'] or 0,
                 'last_message': str(summary or ''),
                 'msg_type': format_msg_type(s['msg_type']),
                 'sender': sender_display,
@@ -144,20 +152,46 @@ def new_messages(ctx, fmt):
 
     new_msgs.sort(key=lambda m: m['timestamp'])
 
-    if fmt == 'json':
-        output({'first_call': False, 'new_count': len(new_msgs), 'messages': new_msgs}, 'json')
-    else:
-        if not new_msgs:
-            output("无新消息", 'text')
-        else:
+    data = {'first_call': False, 'new_count': len(new_msgs), 'messages': new_msgs}
+    _render_messages(data, fmt)
+
+
+def _render_messages(data, fmt):
+    render_result(
+        data, fmt, records_key='messages',
+        columns=[
+            Column("time", "TIME", width=8),
+            Column("chat", "CHAT", min_width=10, max_width=24),
+            Column("unread", "UNREAD", width=6),
+            Column("msg_type", "TYPE", width=10),
+            Column("sender", "SENDER", min_width=8, max_width=16),
+            Column("last_message", "LAST MESSAGE", min_width=20, max_width=64),
+        ],
+        text_fn=_format_messages_text,
+    )
+
+
+def _format_messages_text(data):
+    messages = data['messages']
+    if data.get('first_call'):
+        if messages:
             lines = []
-            for m in new_msgs:
-                entry = f"[{m['time']}] {m['chat']}"
-                if m['is_group']:
-                    entry += " [群]"
-                entry += f": {m['msg_type']}"
-                if m['sender']:
-                    entry += f" ({m['sender']})"
-                entry += f" - {m['last_message']}"
-                lines.append(entry)
-            output(f"{len(new_msgs)} 条新消息:\n\n" + "\n".join(lines), 'text')
+            for m in messages:
+                tag = " [群]" if m['is_group'] else ""
+                lines.append(f"[{m['time']}] {m['chat']}{tag} ({m['unread']}条未读): {m['last_message']}")
+            return f"当前 {len(messages)} 个未读会话:\n\n" + "\n".join(lines)
+        return "当前无未读消息（已记录状态，下次调用将返回新消息）"
+
+    if not messages:
+        return "无新消息"
+    lines = []
+    for m in messages:
+        entry = f"[{m['time']}] {m['chat']}"
+        if m['is_group']:
+            entry += " [群]"
+        entry += f": {m['msg_type']}"
+        if m.get('sender'):
+            entry += f" ({m['sender']})"
+        entry += f" - {m['last_message']}"
+        lines.append(entry)
+    return f"{len(messages)} 条新消息:\n\n" + "\n".join(lines)

@@ -3,14 +3,14 @@
 import click
 
 from ..core.contacts import get_contact_full, get_contact_names, resolve_username, get_contact_detail
-from ..output.formatter import output
+from ..output.formatter import Column, QUERY_FORMATS, render_result
 
 
 @click.command("contacts")
 @click.option("--query", default="", help="搜索关键词（匹配昵称、备注、wxid）")
 @click.option("--detail", default=None, help="查看联系人详情（传入昵称/备注/wxid）")
 @click.option("--limit", default=50, help="返回数量")
-@click.option("--format", "fmt", default="json", type=click.Choice(["json", "text"]), help="输出格式")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
 @click.pass_context
 def contacts(ctx, query, detail, limit, fmt):
     """搜索或列出联系人
@@ -40,18 +40,19 @@ def contacts(ctx, query, detail, limit, fmt):
 
     matched = matched[:limit]
 
-    if fmt == 'json':
-        output(matched, 'json')
-    else:
-        header = f"找到 {len(matched)} 个联系人:"
-        lines = []
-        for c in matched:
-            display = c['remark'] or c['nick_name'] or c['username']
-            line = f"{display}  ({c['username']})"
-            if c['remark']:
-                line += f"  备注: {c['remark']}"
-            lines.append(line)
-        output(header + "\n\n" + "\n".join(lines), 'text')
+    for c in matched:
+        c['display_name'] = c['remark'] or c['nick_name'] or c['username']
+
+    render_result(
+        matched, fmt,
+        columns=[
+            Column("display_name", "DISPLAY NAME", min_width=12, max_width=28),
+            Column("username", "USERNAME", min_width=16, max_width=32),
+            Column("remark", "REMARK", min_width=8, max_width=24),
+            Column("nick_name", "NICK", min_width=8, max_width=24),
+        ],
+        text_fn=_format_contacts_text,
+    )
 
 
 def _show_detail(app, name_or_id, fmt):
@@ -69,23 +70,42 @@ def _show_detail(app, name_or_id, fmt):
         click.echo(f"找不到联系人: {name_or_id}", err=True)
         return
 
-    if fmt == 'json':
-        output(info, 'json')
-    else:
-        lines = [f"联系人详情: {info['nick_name']}"]
-        if info['remark']:
-            lines.append(f"备注: {info['remark']}")
-        if info['alias']:
-            lines.append(f"微信号: {info['alias']}")
-        lines.append(f"wxid: {info['username']}")
-        if info['description']:
-            lines.append(f"个性签名: {info['description']}")
-        if info['is_group']:
-            lines.append("类型: 群聊")
-        elif info['is_subscription']:
-            lines.append("类型: 公众号")
-        elif info['verify_flag'] and info['verify_flag'] >= 8:
-            lines.append("类型: 企业认证")
-        if info['avatar']:
-            lines.append(f"头像: {info['avatar']}")
-        output("\n".join(lines), 'text')
+    rows = [{'field': k, 'value': v} for k, v in info.items()]
+    if fmt == 'table':
+        render_result(rows, fmt, columns=[
+            Column("field", "FIELD", min_width=12, max_width=20),
+            Column("value", "VALUE", min_width=20, max_width=80),
+        ])
+        return
+    render_result(info, fmt, text_fn=_format_contact_detail_text)
+
+
+def _format_contacts_text(matched):
+    header = f"找到 {len(matched)} 个联系人:"
+    lines = []
+    for c in matched:
+        line = f"{c['display_name']}  ({c['username']})"
+        if c['remark']:
+            line += f"  备注: {c['remark']}"
+        lines.append(line)
+    return header + "\n\n" + "\n".join(lines)
+
+
+def _format_contact_detail_text(info):
+    lines = [f"联系人详情: {info['nick_name']}"]
+    if info['remark']:
+        lines.append(f"备注: {info['remark']}")
+    if info['alias']:
+        lines.append(f"微信号: {info['alias']}")
+    lines.append(f"wxid: {info['username']}")
+    if info['description']:
+        lines.append(f"个性签名: {info['description']}")
+    if info['is_group']:
+        lines.append("类型: 群聊")
+    elif info['is_subscription']:
+        lines.append("类型: 公众号")
+    elif info['verify_flag'] and info['verify_flag'] >= 8:
+        lines.append("类型: 企业认证")
+    if info['avatar']:
+        lines.append(f"头像: {info['avatar']}")
+    return "\n".join(lines)

@@ -34,6 +34,19 @@ MSG_TYPE_FILTERS = {
 MSG_TYPE_NAMES = list(MSG_TYPE_FILTERS.keys())
 
 
+def msg_type_matches(raw_type, msg_type_name):
+    """Return whether a raw WeChat message type matches a named filter."""
+    msg_type_filter = MSG_TYPE_FILTERS.get(msg_type_name)
+    if msg_type_filter is None:
+        return True
+    base_type, sub_type = _split_msg_type(raw_type)
+    if base_type != msg_type_filter[0]:
+        return False
+    if len(msg_type_filter) > 1:
+        return sub_type == msg_type_filter[1]
+    return True
+
+
 # ---- 消息 DB 发现 ----
 
 def find_msg_db_keys(all_keys):
@@ -637,7 +650,7 @@ def collect_chat_search(ctx, names, keyword, display_name_fn, start_ts=None, end
     return collected, failures
 
 
-def search_all_messages(msg_db_keys, cache, names, keyword, display_name_fn, start_ts=None, end_ts=None, candidate_limit=20, msg_type_filter=None):
+def search_all_messages(msg_db_keys, cache, names, keyword, display_name_fn, start_ts=None, end_ts=None, candidate_limit=20, msg_type_filter=None, context_filter=None):
     collected = []
     failures = []
     for rel_key in msg_db_keys:
@@ -647,6 +660,10 @@ def search_all_messages(msg_db_keys, cache, names, keyword, display_name_fn, sta
         try:
             with closing(sqlite3.connect(path)) as conn:
                 contexts = _load_search_contexts_from_db(conn, path, names)
+                if context_filter is not None:
+                    contexts = [ctx for ctx in contexts if context_filter(ctx)]
+                if not contexts:
+                    continue
                 db_entries, db_failures = _collect_search_entries(
                     conn, contexts, names, keyword, display_name_fn,
                     start_ts=start_ts, end_ts=end_ts, candidate_limit=candidate_limit,

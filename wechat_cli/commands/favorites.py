@@ -9,7 +9,7 @@ from datetime import datetime
 import click
 
 from ..core.contacts import get_contact_names
-from ..output.formatter import output
+from ..output.formatter import Column, QUERY_FORMATS, render_result
 
 _FAV_TYPE_MAP = {
     1: '文本', 2: '图片', 5: '文章', 19: '名片', 20: '视频号',
@@ -57,7 +57,7 @@ def _parse_fav_content(content, fav_type):
               type=click.Choice(list(_FAV_TYPE_FILTERS.keys())),
               help="按类型过滤: text/image/article/card/video")
 @click.option("--query", default=None, help="关键词搜索")
-@click.option("--format", "fmt", default="json", type=click.Choice(["json", "text"]), help="输出格式")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
 @click.pass_context
 def favorites(ctx, limit, fav_type, query, fmt):
     """查看微信收藏
@@ -67,7 +67,7 @@ def favorites(ctx, limit, fav_type, query, fmt):
       wechat-cli favorites                        # 最近收藏
       wechat-cli favorites --type article         # 只看文章
       wechat-cli favorites --query "计算机网络"    # 搜索收藏
-      wechat-cli favorites --limit 5 --format text
+      wechat-cli favorites --limit 5 --format table
     """
     app = ctx.obj
 
@@ -122,21 +122,33 @@ def favorites(ctx, limit, fav_type, query, fmt):
             'source_chat': chat_display,
         })
 
-    if fmt == 'json':
-        output({
-            'count': len(results),
-            'favorites': results,
-        }, 'json')
-    else:
-        if not results:
-            output("没有找到收藏", 'text')
-            return
-        lines = []
-        for r in results:
-            entry = f"[{r['time']}] [{r['type']}] {r['summary']}"
-            if r['from']:
-                entry += f"\n  来自: {r['from']}"
-            if r['source_chat']:
-                entry += f"  聊天: {r['source_chat']}"
-            lines.append(entry)
-        output(f"收藏列表（{len(results)} 条）:\n\n" + "\n\n".join(lines), 'text')
+    data = {
+        'count': len(results),
+        'favorites': results,
+    }
+    render_result(
+        data, fmt, records_key='favorites',
+        columns=[
+            Column("time", "TIME", width=16),
+            Column("type", "TYPE", width=10),
+            Column("summary", "SUMMARY", min_width=20, max_width=64),
+            Column("from", "FROM", min_width=8, max_width=18),
+            Column("source_chat", "SOURCE", min_width=8, max_width=18),
+        ],
+        text_fn=_format_favorites_text,
+    )
+
+
+def _format_favorites_text(data):
+    results = data['favorites']
+    if not results:
+        return "没有找到收藏"
+    lines = []
+    for r in results:
+        entry = f"[{r['time']}] [{r['type']}] {r['summary']}"
+        if r['from']:
+            entry += f"\n  来自: {r['from']}"
+        if r['source_chat']:
+            entry += f"  聊天: {r['source_chat']}"
+        lines.append(entry)
+    return f"收藏列表（{len(results)} 条）:\n\n" + "\n\n".join(lines)
