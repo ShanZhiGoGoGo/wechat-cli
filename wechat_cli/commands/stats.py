@@ -16,27 +16,29 @@ from ..output.formatter import (
     output_table,
     output_text,
 )
+from .schema_option import schema_option
 
 
 @click.command("stats")
+@schema_option("stats")
 @click.argument("chat_name")
-@click.option("--start-time", default="", help="起始时间 YYYY-MM-DD [HH:MM[:SS]]")
-@click.option("--end-time", default="", help="结束时间 YYYY-MM-DD [HH:MM[:SS]]")
-@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
+@click.option("--from", "from_time", metavar="", default="", help="起始时间 (YYYY-MM-DD [HH:MM[:SS]])")
+@click.option("--to", "to_time", metavar="", default="", help="结束时间 (YYYY-MM-DD [HH:MM[:SS]])")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
 @click.pass_context
-def stats(ctx, chat_name, start_time, end_time, fmt):
+def stats(ctx, chat_name, from_time, to_time, fmt):
     """聊天统计分析
 
     \b
     示例:
       wechat-cli stats "AI交流群"
-      wechat-cli stats "张三" --start-time "2026-04-01" --end-time "2026-04-03"
+      wechat-cli stats "张三" --from "2026-04-01" --to "2026-04-03"
       wechat-cli stats "群名" --format table
     """
     app = ctx.obj
 
     try:
-        start_ts, end_ts = parse_time_range(start_time, end_time)
+        start_ts, end_ts = parse_time_range(from_time, to_time)
     except ValueError as e:
         click.echo(f"错误: {e}", err=True)
         ctx.exit(2)
@@ -59,8 +61,8 @@ def stats(ctx, chat_name, start_time, end_time, fmt):
         'chat': chat_ctx['display_name'],
         'username': chat_ctx['username'],
         'is_group': chat_ctx['is_group'],
-        'start_time': start_time or None,
-        'end_time': end_time or None,
+        'from': from_time or None,
+        'to': to_time or None,
         **result,
     }
     if fmt == 'json':
@@ -120,8 +122,8 @@ def _format_stats_text(data):
     if data['is_group']:
         lines[0] += " [群聊]"
     lines.append(f"消息总数: {data['total']}")
-    if data['start_time'] or data['end_time']:
-        lines.append(f"时间范围: {data['start_time'] or '最早'} ~ {data['end_time'] or '最新'}")
+    if data['from'] or data['to']:
+        lines.append(f"时间范围: {data['from'] or '最早'} ~ {data['to'] or '最新'}")
 
     lines.append("\n消息类型分布:")
     for t, cnt in data['type_breakdown'].items():

@@ -9,12 +9,14 @@ import click
 
 from ..core.config import STATE_DIR, CONFIG_FILE, KEYS_FILE, auto_detect_db_dir
 from ..output.formatter import INIT_FORMATS, output_json
+from .schema_option import schema_option
 
 
 @click.command()
-@click.option("--db-dir", default=None, help="微信数据目录路径（默认自动检测）")
+@schema_option("init")
+@click.option("--db-dir", metavar="", default=None, help="微信数据目录路径 (默认自动检测)")
 @click.option("--force", is_flag=True, help="强制重新提取密钥")
-@click.option("--format", "fmt", default="text", type=click.Choice(INIT_FORMATS), help="输出格式")
+@click.option("--format", "fmt", default="text", type=click.Choice(INIT_FORMATS), metavar="", help="输出格式: text, json (默认 text)")
 def init(db_dir, force, fmt):
     """初始化 wechat-cli：提取密钥并生成配置"""
     json_mode = fmt == "json"

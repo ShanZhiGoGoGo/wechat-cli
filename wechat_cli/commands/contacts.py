@@ -4,15 +4,18 @@ import click
 
 from ..core.contacts import get_contact_full, get_contact_names, resolve_username, get_contact_detail
 from ..output.formatter import Column, QUERY_FORMATS, render_result
+from .schema_option import schema_option
 
 
 @click.command("contacts")
-@click.option("--query", default="", help="搜索关键词（匹配昵称、备注、wxid）")
-@click.option("--detail", default=None, help="查看联系人详情（传入昵称/备注/wxid）")
-@click.option("--limit", default=50, help="返回数量")
-@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
+@schema_option("contacts")
+@click.option("--query", metavar="", default="", help="搜索关键词")
+@click.option("--detail", metavar="", default=None, help="查看联系人详情 (传入昵称/备注/wxid)")
+@click.option("--limit", metavar="", default=50, help="返回数量 (默认 50)")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
+@click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def contacts(ctx, query, detail, limit, fmt):
+def contacts(ctx, query, detail, limit, fmt, fields):
     """搜索或列出联系人
 
     \b
@@ -38,13 +41,21 @@ def contacts(ctx, query, detail, limit, fmt):
     else:
         matched = full
 
+    total = len(matched)
+    has_more = total > limit
     matched = matched[:limit]
 
     for c in matched:
         c['display_name'] = c['remark'] or c['nick_name'] or c['username']
 
+    data = {
+        'total': total,
+        'has_more': has_more,
+        'limit': limit,
+        'contacts': matched,
+    }
     render_result(
-        matched, fmt,
+        data, fmt, records_key='contacts', fields=fields,
         columns=[
             Column("display_name", "DISPLAY NAME", min_width=12, max_width=28),
             Column("username", "USERNAME", min_width=16, max_width=32),
@@ -80,15 +91,18 @@ def _show_detail(app, name_or_id, fmt):
     render_result(info, fmt, text_fn=_format_contact_detail_text)
 
 
-def _format_contacts_text(matched):
-    header = f"找到 {len(matched)} 个联系人:"
+def _format_contacts_text(data):
+    results = data['contacts']
+    header = f"找到 {len(results)} 个联系人（共 {data['total']} 个）"
+    if data['has_more']:
+        header += "，还有更多"
     lines = []
-    for c in matched:
+    for c in results:
         line = f"{c['display_name']}  ({c['username']})"
         if c['remark']:
             line += f"  备注: {c['remark']}"
         lines.append(line)
-    return header + "\n\n" + "\n".join(lines)
+    return header + ":\n\n" + "\n".join(lines)
 
 
 def _format_contact_detail_text(info):

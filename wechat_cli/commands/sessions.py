@@ -9,19 +9,22 @@ import click
 
 from ..core.contacts import get_contact_names
 from ..core.messages import decompress_content, format_msg_type
-from .filters import BOOL_CHOICE, SESSION_MSG_TYPE_CHOICE, matches_session_filters
+from .filters import BOOL_CHOICE, MSG_TYPE_CHOICE, matches_session_filters
+from .schema_option import schema_option
 from ..output.formatter import Column, QUERY_FORMATS, render_result
 
 
 @click.command("sessions")
-@click.option("--limit", default=20, help="返回的会话数量")
-@click.option("--chat", default="", help="按聊天名称或 username 过滤")
-@click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, help="是否只看群聊: true/false")
-@click.option("--msg-type", "msg_type_filter", default=None, type=SESSION_MSG_TYPE_CHOICE, help="消息类型过滤: text/link/file")
-@click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, help="是否只看有未读的会话: true/false")
-@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
+@schema_option("sessions")
+@click.option("--limit", metavar="", default=20, help="返回数量 (默认 20)")
+@click.option("--chat", metavar="", default="", help="按聊天名或 username 过滤")
+@click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, metavar="", help="群聊过滤 (true/false)")
+@click.option("--msg-type", "msg_type_filter", default=None, type=MSG_TYPE_CHOICE, metavar="", help="消息类型: text, image, voice, video, sticker, location, link, file, call, system")
+@click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, metavar="", help="未读过滤 (true/false)")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
+@click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def sessions(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fmt):
+def sessions(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fmt, fields):
     """获取最近会话列表
 
     \b
@@ -77,15 +80,23 @@ def sessions(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, 
             'msg_type': format_msg_type(raw_msg_type),
             'sender': sender_display,
             'timestamp': ts,
-            'time': datetime.fromtimestamp(ts).strftime('%m-%d %H:%M'),
+            'time': datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M'),
         })
-        if len(results) >= limit:
-            break
 
+    total = len(results)
+    has_more = total > limit
+    results = results[:limit]
+
+    data = {
+        'total': total,
+        'has_more': has_more,
+        'limit': limit,
+        'sessions': results,
+    }
     render_result(
-        results, fmt,
+        data, fmt, records_key='sessions', fields=fields,
         columns=[
-            Column("time", "TIME", width=11),
+            Column("time", "TIME", width=16),
             Column("unread", "UNREAD", width=6),
             Column("chat", "CHAT", min_width=10, max_width=24),
             Column("msg_type", "TYPE", width=10),
@@ -96,7 +107,8 @@ def sessions(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, 
     )
 
 
-def _format_sessions_text(results):
+def _format_sessions_text(data):
+    results = data['sessions']
     lines = []
     for r in results:
         entry = f"[{r['time']}] {r['chat']}"
@@ -109,4 +121,7 @@ def _format_sessions_text(results):
             entry += f"{r['sender']}: "
         entry += r['last_message']
         lines.append(entry)
-    return f"最近 {len(results)} 个会话:\n\n" + "\n\n".join(lines)
+    header = f"最近 {len(results)} 个会话（共 {data['total']} 个）"
+    if data['has_more']:
+        header += "，还有更多"
+    return header + ":\n\n" + "\n\n".join(lines)

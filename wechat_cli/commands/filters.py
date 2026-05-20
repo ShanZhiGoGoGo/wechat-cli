@@ -5,8 +5,10 @@ import click
 from ..core.messages import msg_type_matches
 
 BOOL_CHOICE = click.Choice(("true", "false"))
-SESSION_MSG_TYPE_NAMES = ("text", "link", "file")
-SESSION_MSG_TYPE_CHOICE = click.Choice(SESSION_MSG_TYPE_NAMES)
+MSG_TYPE_CHOICE = click.Choice((
+    "text", "image", "voice", "video", "sticker",
+    "location", "link", "file", "call", "system",
+))
 
 
 def parse_bool_option(value):

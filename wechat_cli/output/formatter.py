@@ -1,6 +1,8 @@
 """输出格式化 — JSON/NDJSON (机器友好) / Table/Text (人类可读)"""
 
 import json
+import os
+import re
 import sys
 from dataclasses import dataclass
 from shutil import get_terminal_size
@@ -115,7 +117,7 @@ def _resolve_table_widths(rows, columns, max_width=None):
     return widths
 
 
-def output_table(rows, columns, file=None, max_width=None):
+def output_table(rows, columns, file=None, max_width=None, highlight_keyword=None):
     file = file or sys.stdout
     rows = list(rows or [])
     columns = list(columns or [])
@@ -123,6 +125,7 @@ def output_table(rows, columns, file=None, max_width=None):
         output_json(rows, file)
         return
 
+    do_highlight = bool(highlight_keyword) and sys.stdout.isatty() and not os.environ.get('NO_COLOR')
     widths = _resolve_table_widths(rows, columns, max_width=max_width)
     header = '  '.join(_pad(_truncate(col.header, widths[i]), widths[i]) for i, col in enumerate(columns))
     divider = '  '.join('-' * widths[i] for i in range(len(columns)))
@@ -133,6 +136,8 @@ def output_table(rows, columns, file=None, max_width=None):
             _pad(_truncate(_cell_value(row, col.key), widths[i]), widths[i])
             for i, col in enumerate(columns)
         )
+        if do_highlight:
+            line = highlight(line, highlight_keyword)
         file.write(line.rstrip() + '\n')
 
 
@@ -152,7 +157,9 @@ def primary_records(data, records_key=None):
     return [{"value": records}]
 
 
-def render_result(data, fmt='json', records_key=None, columns=None, text_fn=None, file=None):
+def render_result(data, fmt='json', records_key=None, columns=None, text_fn=None, file=None, fields=None, highlight_keyword=None):
+    if fmt in ('json', 'ndjson') and fields:
+        data = filter_fields(data, fields)
     if fmt == 'json':
         output_json(data, file)
     elif fmt == 'ndjson':
@@ -160,12 +167,16 @@ def render_result(data, fmt='json', records_key=None, columns=None, text_fn=None
         normalized = [r if isinstance(r, dict) else {"value": r} for r in records]
         output_ndjson(normalized, file)
     elif fmt == 'table':
-        output_table(primary_records(data, records_key), columns or [], file=file)
+        rows = primary_records(data, records_key)
+        output_table(rows, columns or [], file=file, highlight_keyword=highlight_keyword)
     elif fmt == 'text':
         if text_fn is None:
             output(data, 'json', file=file)
         else:
-            output_text(text_fn(data), file=file)
+            text = text_fn(data)
+            if highlight_keyword:
+                text = highlight(text, highlight_keyword)
+            output_text(text, file=file)
     else:
         raise ValueError(f"unsupported output format: {fmt}")
 
@@ -184,3 +195,51 @@ def output(data, fmt='json', file=None):
             output_text(data['text'], file)
         else:
             output_json(data, file)
+
+
+def filter_fields(data, fields_str):
+    """Filter top-level keys in a dict or list of dicts based on comma-separated field names.
+
+    Only applies to dict/list-of-dict data. Non-dict data is returned as-is.
+    """
+    if not fields_str or not data:
+        return data
+    fields = [f.strip() for f in fields_str.split(',') if f.strip()]
+    if not fields:
+        return data
+    if isinstance(data, dict):
+        return {k: v for k, v in data.items() if k in fields}
+    if isinstance(data, list):
+        return [{k: v for k, v in item.items() if k in fields} for item in data if isinstance(item, dict)]
+    return data
+
+
+def highlight(text, keyword):
+    """Highlight keyword matches in text using ANSI codes.
+
+    Only applies when stdout is a TTY and NO_COLOR is not set.
+    Returns text unchanged otherwise.
+    """
+    if not keyword or not text:
+        return text
+    if not sys.stdout.isatty():
+        return text
+    if os.environ.get('NO_COLOR'):
+        return text
+    try:
+        import click
+        pattern = re.compile(re.escape(keyword), re.IGNORECASE)
+        return pattern.sub(lambda m: click.style(m.group(), bg='yellow', fg='black'), text)
+    except Exception:
+        return text
+
+
+def warn(message, file=None):
+    """Output a warning message to stderr with colored 'warning:' prefix."""
+    import click
+    file = file or sys.stderr
+    if file.isatty() and not os.environ.get('NO_COLOR'):
+        prefix = click.style("warning:", fg="yellow", bold=True)
+    else:
+        prefix = "warning:"
+    click.echo(f"{prefix} {message}", err=True, file=file)

@@ -11,8 +11,9 @@ import click
 from ..core.config import STATE_DIR
 from ..core.contacts import get_contact_names
 from ..core.messages import decompress_content, format_msg_type
-from .filters import BOOL_CHOICE, SESSION_MSG_TYPE_CHOICE, matches_session_filters
+from .filters import BOOL_CHOICE, MSG_TYPE_CHOICE, matches_session_filters
 from ..output.formatter import Column, QUERY_FORMATS, render_result
+from .schema_option import schema_option
 
 STATE_FILE = os.path.join(STATE_DIR, "last_check.json")
 
@@ -34,13 +35,16 @@ def _save_last_state(state):
 
 
 @click.command("new-messages")
-@click.option("--chat", default="", help="按聊天名称或 username 过滤")
-@click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, help="是否只看群聊: true/false")
-@click.option("--msg-type", "msg_type_filter", default=None, type=SESSION_MSG_TYPE_CHOICE, help="消息类型过滤: text/link/file")
-@click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, help="是否只看有未读的会话: true/false")
-@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
+@schema_option("new-messages")
+@click.option("--chat", metavar="", default="", help="按聊天名或 username 过滤")
+@click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, metavar="", help="群聊过滤 (true/false)")
+@click.option("--msg-type", "msg_type_filter", default=None, type=MSG_TYPE_CHOICE, metavar="", help="消息类型: text, image, voice, video, sticker, location, link, file, call, system")
+@click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, metavar="", help="未读过滤 (true/false)")
+@click.option("--limit", metavar="", default=50, help="返回数量 (默认 50)")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
+@click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, fmt):
+def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, limit, fmt, fields):
     """获取自上次调用以来的新消息
 
     \b
@@ -98,7 +102,7 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, fmt
                     summary = decompress_content(summary, 4) or '(压缩内容)'
                 if isinstance(summary, str) and ':\n' in summary:
                     summary = summary.split(':\n', 1)[1]
-                time_str = datetime.fromtimestamp(s['timestamp']).strftime('%H:%M')
+                time_str = datetime.fromtimestamp(s['timestamp']).strftime('%Y-%m-%d %H:%M')
                 unread_msgs.append({
                     'chat': display,
                     'username': username,
@@ -110,8 +114,17 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, fmt
                     'timestamp': s['timestamp'],
                 })
 
-        data = {'first_call': True, 'unread_count': len(unread_msgs), 'messages': unread_msgs}
-        _render_messages(data, fmt)
+        total = len(unread_msgs)
+        has_more = total > limit
+        data = {
+            'first_call': True,
+            'total': total,
+            'has_more': has_more,
+            'unread_count': total,
+            'limit': limit,
+            'messages': unread_msgs[:limit],
+        }
+        _render_messages(data, fmt, fields)
         return
 
     # 后续调用：对比差异
@@ -144,7 +157,7 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, fmt
                 'last_message': str(summary or ''),
                 'msg_type': format_msg_type(s['msg_type']),
                 'sender': sender_display,
-                'time': datetime.fromtimestamp(s['timestamp']).strftime('%H:%M:%S'),
+                'time': datetime.fromtimestamp(s['timestamp']).strftime('%Y-%m-%d %H:%M'),
                 'timestamp': s['timestamp'],
             })
 
@@ -152,15 +165,24 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, fmt
 
     new_msgs.sort(key=lambda m: m['timestamp'])
 
-    data = {'first_call': False, 'new_count': len(new_msgs), 'messages': new_msgs}
-    _render_messages(data, fmt)
+    total = len(new_msgs)
+    has_more = total > limit
+    data = {
+        'first_call': False,
+        'total': total,
+        'has_more': has_more,
+        'new_count': total,
+        'limit': limit,
+        'messages': new_msgs[:limit],
+    }
+    _render_messages(data, fmt, fields)
 
 
-def _render_messages(data, fmt):
+def _render_messages(data, fmt, fields=None):
     render_result(
-        data, fmt, records_key='messages',
+        data, fmt, records_key='messages', fields=fields,
         columns=[
-            Column("time", "TIME", width=8),
+            Column("time", "TIME", width=16),
             Column("chat", "CHAT", min_width=10, max_width=24),
             Column("unread", "UNREAD", width=6),
             Column("msg_type", "TYPE", width=10),

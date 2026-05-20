@@ -594,8 +594,9 @@ def collect_chat_history(ctx, names, display_name_fn, start_ts=None, end_ts=None
         except Exception as e:
             failures.append(f"{table_ctx['db_path']}: {e}")
 
+    total = len(collected)
     paged = _page_ranked_entries(collected, limit, offset)
-    return [line for _, line in paged], failures
+    return [line for _, line in paged], total, failures
 
 
 # ---- 搜索查询 ----
@@ -647,7 +648,8 @@ def collect_chat_search(ctx, names, keyword, display_name_fn, start_ts=None, end
                 failures.extend(db_failures)
         except Exception as e:
             failures.extend(f"{tc['display_name']}: {e}" for tc in db_contexts)
-    return collected, failures
+    total = len(collected)
+    return collected, total, failures
 
 
 def search_all_messages(msg_db_keys, cache, names, keyword, display_name_fn, start_ts=None, end_ts=None, candidate_limit=20, msg_type_filter=None, context_filter=None):
@@ -673,7 +675,8 @@ def search_all_messages(msg_db_keys, cache, names, keyword, display_name_fn, sta
                 failures.extend(db_failures)
         except Exception as e:
             failures.append(f"{rel_key}: {e}")
-    return collected, failures
+    total = len(collected)
+    return collected, total, failures
 
 
 def _load_search_contexts_from_db(conn, db_path, names):

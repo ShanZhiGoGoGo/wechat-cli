@@ -4,13 +4,17 @@ import click
 
 from ..core.contacts import get_contact_names, resolve_username, get_group_members
 from ..output.formatter import Column, QUERY_FORMATS, render_result
+from .schema_option import schema_option
 
 
 @click.command("members")
+@schema_option("members")
 @click.argument("group_name")
-@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), help="输出格式")
+@click.option("--limit", metavar="", default=50, help="返回数量 (默认 50)")
+@click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
+@click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def members(ctx, group_name, fmt):
+def members(ctx, group_name, limit, fmt, fields):
     """查询群聊成员列表
 
     \b
@@ -34,15 +38,22 @@ def members(ctx, group_name, fmt):
 
     result = get_group_members(username, app.cache, app.decrypted_dir)
 
+    all_members = result['members']
+    total = len(all_members)
+    has_more = total > limit
+    members_list = all_members[:limit]
+
     data = {
         'group': display_name,
         'username': username,
-        'member_count': len(result['members']),
+        'member_count': total,
+        'has_more': has_more,
+        'limit': limit,
         'owner': result['owner'],
-        'members': result['members'],
+        'members': members_list,
     }
     render_result(
-        data, fmt, records_key='members',
+        data, fmt, records_key='members', fields=fields,
         columns=[
             Column("display_name", "DISPLAY NAME", min_width=12, max_width=28),
             Column("username", "USERNAME", min_width=16, max_width=32),
