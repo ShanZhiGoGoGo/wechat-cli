@@ -7,9 +7,9 @@ from datetime import datetime
 
 import click
 
-from ..core.contacts import get_contact_names
+from ..core.contacts import get_contact_names, classify_chat_type
 from ..core.messages import decompress_content, format_msg_type
-from .filters import BOOL_CHOICE, MSG_TYPE_CHOICE, matches_session_filters
+from .filters import BOOL_CHOICE, MSG_TYPE_CHOICE, CHAT_TYPE_CHOICE, matches_session_filters
 from ..output.formatter import Column, QUERY_FORMATS, render_result
 from .schema_option import schema_option
 
@@ -19,12 +19,13 @@ from .schema_option import schema_option
 @click.option("--limit", metavar="", default=50, help="返回数量 (默认 50)")
 @click.option("--chat", metavar="", default="", help="按聊天名或 username 过滤")
 @click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, metavar="", help="群聊过滤 (true/false)")
+@click.option("--chat-type", "chat_type_filter", default=None, type=CHAT_TYPE_CHOICE, metavar="", help="会话类型: group, subscription, contact, openim, kefu")
 @click.option("--msg-type", "msg_type_filter", default=None, type=MSG_TYPE_CHOICE, metavar="", help="消息类型: text, image, voice, video, sticker, location, link, file, call, system")
 @click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, metavar="", help="未读过滤 (true/false)")
 @click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
 @click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def unread(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fmt, fields):
+def unread(ctx, limit, chat, is_group_filter, chat_type_filter, msg_type_filter, unread_filter, fmt, fields):
     """查看未读会话
 
     \b
@@ -55,10 +56,11 @@ def unread(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fm
     for r in rows:
         username, unread_count, summary, ts, raw_msg_type, sender, sender_name = r
         display = names.get(username, username)
-        is_group = '@chatroom' in username
+        chat_type = classify_chat_type(username)
+        is_group = chat_type == 'group'
         if not matches_session_filters(
             username, display, unread_count, raw_msg_type,
-            chat=chat, is_group=is_group_filter, unread=unread_filter, msg_type=msg_type_filter,
+            chat=chat, is_group=is_group_filter, chat_type=chat_type_filter, unread=unread_filter, msg_type=msg_type_filter,
         ):
             continue
 
@@ -74,6 +76,7 @@ def unread(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fm
         results.append({
             'chat': display,
             'username': username,
+            'chat_type': chat_type,
             'is_group': is_group,
             'unread': unread_count or 0,
             'last_message': str(summary or ''),
@@ -107,6 +110,14 @@ def unread(ctx, limit, chat, is_group_filter, msg_type_filter, unread_filter, fm
     )
 
 
+_CHAT_TYPE_LABELS = {
+    'group': '[群]',
+    'subscription': '[公众号]',
+    'openim': '[企微]',
+    'kefu': '[客服]',
+}
+
+
 def _format_unread_text(data):
     results = data['unread']
     if not results:
@@ -114,8 +125,9 @@ def _format_unread_text(data):
     lines = []
     for r in results:
         entry = f"[{r['time']}] {r['chat']}"
-        if r['is_group']:
-            entry += " [群]"
+        label = _CHAT_TYPE_LABELS.get(r['chat_type'])
+        if label:
+            entry += f" {label}"
         entry += f" ({r['unread']}条未读)"
         entry += f"\n  {r['msg_type']}: "
         if r['sender']:

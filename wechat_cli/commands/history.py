@@ -26,9 +26,10 @@ from .filters import MSG_TYPE_CHOICE
 @click.option("--msg-type", "msg_type", default=None, type=MSG_TYPE_CHOICE, metavar="", help="消息类型: text, image, voice, video, sticker, location, link, file, call, system")
 @click.option("--type", "type_alias", default=None, type=MSG_TYPE_CHOICE, metavar="", help="[DEPRECATED] 使用 --msg-type 代替")
 @click.option("--media", is_flag=True, help="解析媒体文件路径")
+@click.option("--sort", "sort_order", default="desc", type=click.Choice(("desc", "asc")), metavar="", help="排序方向: desc (最新优先), asc (最旧优先) (默认 desc)")
 @click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def history(ctx, chat_name, limit, offset, from_time, to_time, fmt, msg_type, type_alias, media, fields):
+def history(ctx, chat_name, limit, offset, from_time, to_time, fmt, msg_type, type_alias, media, sort_order, fields):
     """获取指定聊天的消息记录
 
     \b
@@ -64,16 +65,19 @@ def history(ctx, chat_name, limit, offset, from_time, to_time, fmt, msg_type, ty
 
     names = get_contact_names(app.cache, app.decrypted_dir)
     type_filter = MSG_TYPE_FILTERS[msg_type] if msg_type else None
+    sort_reverse = sort_order == 'desc'
     lines, total, failures = collect_chat_history(
         chat_ctx, names, app.display_name_fn,
         start_ts=start_ts, end_ts=end_ts, limit=limit, offset=offset,
         msg_type_filter=type_filter, resolve_media=media, db_dir=app.db_dir,
+        sort_reverse=sort_reverse,
     )
 
     data = {
         'chat': chat_ctx['display_name'],
         'username': chat_ctx['username'],
         'is_group': chat_ctx['is_group'],
+        'sort': sort_order,
         'count': len(lines),
         'total': total,
         'has_more': (offset + len(lines)) < total,

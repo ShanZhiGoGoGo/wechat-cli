@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-05-21
+
+- Add `--chat-type` filter to sessions/unread/new-messages — classify chats as group/subscription/contact/openim/kefu
+- Add `chat_type` field to session output; `--is-group` now only matches real group chats (excludes subscription accounts)
+- Add `--sort` option to history/search — `desc` (newest first, default) or `asc` (oldest first)
+- Fix `new-messages` sort order — now newest first (was oldest first)
+
 ## 2026-05-19
 
 - Add `--schema` flag to all commands — outputs JSON schema and exits without querying

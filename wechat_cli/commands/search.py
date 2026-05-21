@@ -36,9 +36,10 @@ from .schema_option import schema_option
 @click.option("--type", "type_alias", default=None, type=MSG_TYPE_CHOICE, metavar="", help="[DEPRECATED] 使用 --msg-type 代替")
 @click.option("--is-group", default=None, type=BOOL_CHOICE, metavar="", help="群聊过滤 (true/false)")
 @click.option("--unread", default=None, type=BOOL_CHOICE, metavar="", help="未读过滤 (true/false)")
+@click.option("--sort", "sort_order", default="desc", type=click.Choice(("desc", "asc")), metavar="", help="排序方向: desc (最新优先), asc (最旧优先) (默认 desc)")
 @click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def search(ctx, keyword, chat, from_time, to_time, limit, offset, fmt, msg_type, type_alias, is_group, unread, fields):
+def search(ctx, keyword, chat, from_time, to_time, limit, offset, fmt, msg_type, type_alias, is_group, unread, sort_order, fields):
     """搜索消息内容
 
     \b
@@ -120,12 +121,13 @@ def search(ctx, keyword, chat, from_time, to_time, limit, offset, fmt, msg_type,
         )
         scope = "全部消息"
 
-    paged = _page_ranked_entries(entries, limit, offset)
+    paged = _page_ranked_entries(entries, limit, offset, reverse=(sort_order == 'desc'))
 
     result_lines = [item[1] for item in paged]
     data = {
         'scope': scope,
         'keyword': keyword,
+        'sort': sort_order,
         'count': len(paged),
         'total': total,
         'has_more': (offset + len(paged)) < total,

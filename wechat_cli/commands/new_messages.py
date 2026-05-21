@@ -9,9 +9,9 @@ from datetime import datetime
 import click
 
 from ..core.config import STATE_DIR
-from ..core.contacts import get_contact_names
+from ..core.contacts import get_contact_names, classify_chat_type
 from ..core.messages import decompress_content, format_msg_type
-from .filters import BOOL_CHOICE, MSG_TYPE_CHOICE, matches_session_filters
+from .filters import BOOL_CHOICE, MSG_TYPE_CHOICE, CHAT_TYPE_CHOICE, matches_session_filters
 from ..output.formatter import Column, QUERY_FORMATS, render_result
 from .schema_option import schema_option
 
@@ -38,13 +38,14 @@ def _save_last_state(state):
 @schema_option("new-messages")
 @click.option("--chat", metavar="", default="", help="按聊天名或 username 过滤")
 @click.option("--is-group", "is_group_filter", default=None, type=BOOL_CHOICE, metavar="", help="群聊过滤 (true/false)")
+@click.option("--chat-type", "chat_type_filter", default=None, type=CHAT_TYPE_CHOICE, metavar="", help="会话类型: group, subscription, contact, openim, kefu")
 @click.option("--msg-type", "msg_type_filter", default=None, type=MSG_TYPE_CHOICE, metavar="", help="消息类型: text, image, voice, video, sticker, location, link, file, call, system")
 @click.option("--unread", "unread_filter", default=None, type=BOOL_CHOICE, metavar="", help="未读过滤 (true/false)")
 @click.option("--limit", metavar="", default=50, help="返回数量 (默认 50)")
 @click.option("--format", "fmt", default="json", type=click.Choice(QUERY_FORMATS), metavar="", help="输出格式: json, ndjson, table, text (默认 json)")
 @click.option("--fields", metavar="", default=None, help="字段选择器 (逗号分隔)")
 @click.pass_context
-def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, limit, fmt, fields):
+def new_messages(ctx, chat, is_group_filter, chat_type_filter, msg_type_filter, unread_filter, limit, fmt, fields):
     """获取自上次调用以来的新消息
 
     \b
@@ -91,10 +92,11 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, lim
         for username, s in curr_state.items():
             if s['unread'] and s['unread'] > 0:
                 display = names.get(username, username)
-                is_group = '@chatroom' in username
+                chat_type = classify_chat_type(username)
+                is_group = chat_type == 'group'
                 if not matches_session_filters(
                     username, display, s['unread'], s['msg_type'],
-                    chat=chat, is_group=is_group_filter, unread=unread_filter, msg_type=msg_type_filter,
+                    chat=chat, is_group=is_group_filter, chat_type=chat_type_filter, unread=unread_filter, msg_type=msg_type_filter,
                 ):
                     continue
                 summary = s['summary']
@@ -106,6 +108,7 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, lim
                 unread_msgs.append({
                     'chat': display,
                     'username': username,
+                    'chat_type': chat_type,
                     'is_group': is_group,
                     'unread': s['unread'],
                     'last_message': str(summary or ''),
@@ -133,10 +136,11 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, lim
         prev_ts = last_state.get(username, 0)
         if s['timestamp'] > prev_ts:
             display = names.get(username, username)
-            is_group = '@chatroom' in username
+            chat_type = classify_chat_type(username)
+            is_group = chat_type == 'group'
             if not matches_session_filters(
                 username, display, s['unread'], s['msg_type'],
-                chat=chat, is_group=is_group_filter, unread=unread_filter, msg_type=msg_type_filter,
+                chat=chat, is_group=is_group_filter, chat_type=chat_type_filter, unread=unread_filter, msg_type=msg_type_filter,
             ):
                 continue
             summary = s['summary']
@@ -152,6 +156,7 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, lim
             new_msgs.append({
                 'chat': display,
                 'username': username,
+                'chat_type': chat_type,
                 'is_group': is_group,
                 'unread': s['unread'] or 0,
                 'last_message': str(summary or ''),
@@ -163,7 +168,7 @@ def new_messages(ctx, chat, is_group_filter, msg_type_filter, unread_filter, lim
 
     _save_last_state({u: s['timestamp'] for u, s in curr_state.items()})
 
-    new_msgs.sort(key=lambda m: m['timestamp'])
+    new_msgs.sort(key=lambda m: m['timestamp'], reverse=True)
 
     total = len(new_msgs)
     has_more = total > limit
@@ -193,13 +198,22 @@ def _render_messages(data, fmt, fields=None):
     )
 
 
+_CHAT_TYPE_LABELS = {
+    'group': '[群]',
+    'subscription': '[公众号]',
+    'openim': '[企微]',
+    'kefu': '[客服]',
+}
+
+
 def _format_messages_text(data):
     messages = data['messages']
     if data.get('first_call'):
         if messages:
             lines = []
             for m in messages:
-                tag = " [群]" if m['is_group'] else ""
+                label = _CHAT_TYPE_LABELS.get(m.get('chat_type', ''), '')
+                tag = f" {label}" if label else ""
                 lines.append(f"[{m['time']}] {m['chat']}{tag} ({m['unread']}条未读): {m['last_message']}")
             return f"当前 {len(messages)} 个未读会话:\n\n" + "\n".join(lines)
         return "当前无未读消息（已记录状态，下次调用将返回新消息）"
@@ -209,8 +223,9 @@ def _format_messages_text(data):
     lines = []
     for m in messages:
         entry = f"[{m['time']}] {m['chat']}"
-        if m['is_group']:
-            entry += " [群]"
+        label = _CHAT_TYPE_LABELS.get(m.get('chat_type', ''), '')
+        if label:
+            entry += f" {label}"
         entry += f": {m['msg_type']}"
         if m.get('sender'):
             entry += f" ({m['sender']})"

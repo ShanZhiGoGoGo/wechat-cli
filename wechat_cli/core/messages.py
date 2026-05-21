@@ -514,10 +514,10 @@ def _candidate_page_size(limit, offset):
     return limit + offset
 
 
-def _page_ranked_entries(entries, limit, offset):
-    ordered = sorted(entries, key=lambda item: item[0], reverse=True)
+def _page_ranked_entries(entries, limit, offset, reverse=True):
+    ordered = sorted(entries, key=lambda item: item[0], reverse=reverse)
     paged = ordered[offset:offset + limit]
-    paged.sort(key=lambda item: item[0])
+    paged.sort(key=lambda item: item[0], reverse=reverse)
     return paged
 
 
@@ -565,7 +565,7 @@ def _build_search_entry(row, ctx, names, id_to_username, display_name_fn, resolv
 
 # ---- 聊天记录查询 ----
 
-def collect_chat_history(ctx, names, display_name_fn, start_ts=None, end_ts=None, limit=20, offset=0, msg_type_filter=None, resolve_media=False, db_dir=None):
+def collect_chat_history(ctx, names, display_name_fn, start_ts=None, end_ts=None, limit=20, offset=0, msg_type_filter=None, resolve_media=False, db_dir=None, sort_reverse=True):
     collected = []
     failures = []
     candidate_limit = _candidate_page_size(limit, offset)
@@ -595,7 +595,7 @@ def collect_chat_history(ctx, names, display_name_fn, start_ts=None, end_ts=None
             failures.append(f"{table_ctx['db_path']}: {e}")
 
     total = len(collected)
-    paged = _page_ranked_entries(collected, limit, offset)
+    paged = _page_ranked_entries(collected, limit, offset, reverse=sort_reverse)
     return [line for _, line in paged], total, failures
 
 
